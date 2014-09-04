@@ -1,0 +1,215 @@
+#!/usr/bin/env python
+
+#THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+#IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+#FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+#AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+#LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+#OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+#THE SOFTWARE.
+
+
+import argparse
+import pysvn
+import uuid
+import os
+
+
+def command_output(cmd):
+    """
+    Capture a commands standard output.
+    """
+    import subprocess
+    return subprocess.Popen(
+        cmd.split(";"), stdout=subprocess.PIPE).communicate()[0]
+
+def setup_folder_structure(tmp_wc_path, file_name):
+    # setup Folder Structure in Working Copy
+    if "/" in file_name:
+        index = 0
+        while index < file_name.rindex("/"):
+            sub = file_name.index("/", index)
+            parent_folder = file_name[:sub]
+            parent_folder_path = tmp_wc_path + "/" + parent_folder
+
+            if not os.path.exists(parent_folder_path):
+                print("XX: Adding Parent Folder:", parent_folder)
+                out = command_output("svn;update;--set-depth;empty;" + parent_folder_path)
+                print("XX: Update Output:", out)
+            else:
+                print("XX:", "Folder (" + parent_folder_path + ") was already added")
+
+            index = sub + 1
+
+def check_path_for_svn_property(repo_path, path, prop_name):
+    return command_output("svnlook;propget;" + repo_path + ";" + prop_name + ";" + path)
+
+
+def handle_added_files(args, tmp_wc_path, added_files, meta_counter):
+
+    for i in range(0, len(added_files)):
+
+        file_name = added_files[i]
+
+        #continue if the added File is a .meta File
+        if file_name.endswith(".meta"):
+            continue
+
+        # if the next File is the .meta File for this it was added alongside with this File.
+        if (i + 1) < len(added_files):
+            next_file_name = added_files[i+1]
+            if next_file_name == file_name + ".meta":
+                print("Skipping '" + file_name + "' because the .meta File was commited in the same Revision")
+                continue
+
+        # In case a Folder is added.
+        if file_name.endswith("/"):
+            file_name = file_name[:-1]
+
+        res = command_output("svn;info;file://" + args.repo + "/" + file_name + ".meta")
+
+        # look if this File already has a .meta File commited
+        if len(res) is not 0:
+            continue
+
+        print("XX: File with Missing .meta:", file_name)
+        meta_counter += 1
+
+        setup_folder_structure(tmp_wc_path, file_name)
+
+        # create the .meta file
+        meta_file_path = tmp_wc_path + "/" + file_name + ".meta"
+        meta = open(meta_file_path, "w")
+        generated_uuid = str(uuid.uuid4())
+        generated_uuid = generated_uuid.translate(None, '-')
+        meta.write("guid: " + generated_uuid)
+        meta.close()
+
+        # svn add the Files
+        addition = command_output("svn;add;" + meta_file_path)
+        print("XX: Add Out:", addition)
+
+    return meta_counter
+
+
+def handle_deleted_files(args, tmp_wc_path, deleted_files, meta_counter):
+
+    for i in range(0, len(deleted_files)):
+
+        file_name = deleted_files[i]
+
+        #continue if the added File is a .meta File
+        if file_name.endswith(".meta"):
+            continue
+
+        # if the next File is the .meta File for this it was added alongside with this File.
+        if (i + 1) < len(deleted_files):
+            next_file_name = deleted_files[i+1]
+            if next_file_name == file_name + ".meta":
+                print("Skipping '" + file_name + "' because the .meta File was also deleted in the same Revision")
+                continue
+
+        # In case a Folder is deleted.
+        if file_name.endswith("/"):
+            file_name = file_name[:-1]
+
+        res = command_output("svn;info;file://" + args.repo + "/" + file_name + ".meta")
+
+        # look if the .meta file even exists
+        if len(res) is 0:
+            continue
+
+        print("XX: File with Missing .meta:", file_name)
+        meta_counter += 1
+
+        setup_folder_structure(tmp_wc_path, file_name)
+
+        # Check Out the file to Delete
+        meta_file_path = tmp_wc_path + "/" + file_name + ".meta"
+        update = command_output("svn;update;--set-depth;empty;" + meta_file_path)
+        print("XX: Update Out:", update)
+
+        # You probably guessed: Now delete the File :)
+        delete = command_output("svn;del;" + meta_file_path)
+        print("XX: Delete Out:", delete)
+
+    return meta_counter
+
+
+def check_for_meta_and_add_meta(look_cmd, args, unityDataPath):
+
+    def filename(line):
+        return line[4:]
+
+    def added(line):
+        return line and line[0] in "A"
+
+    def deleted(line):
+        return line and line[0] in "D"
+
+    added_files = []
+    deleted_files = []
+
+    for line in command_output(look_cmd % "changed").split("\n"):
+        tmp_name = filename(line)
+
+        print("Processing: " + tmp_name)
+        if not unityDataPath in tmp_name:
+            continue
+        print("PASS: " + tmp_name)
+
+        if added(line):
+            added_files.append(tmp_name)
+            print("XX: Added:", tmp_name)
+        elif deleted(line):
+            deleted_files.append(tmp_name)
+            print("XX: Deleted:", tmp_name)
+
+    tmp_wc_path = "./tmpWC"
+
+    if len(added_files) == 0:
+        print("No Files were added.")
+
+    if len(deleted_files) == 0:
+        print("No Files were deleted.")
+
+    if len(added_files) == 0 and len(deleted_files) == 0:
+        return
+
+    command_output("svn;co;file://" + args.repo + ";" + tmp_wc_path + ";--depth;empty")
+
+    meta_counter = 0
+
+    if len(added_files) > 0:
+        meta_counter = handle_added_files(args, tmp_wc_path, added_files, meta_counter)
+
+    if len(deleted_files) > 0:
+        meta_counter = handle_deleted_files(args, tmp_wc_path, deleted_files, meta_counter)
+
+    if meta_counter > 0:
+        #commit the meta Files
+        commit = command_output("svn;commit;-m;Automated Unity Meta Data Actions for Revision " + str(args.revision) + ";" + tmp_wc_path)
+        print("XX: commit Out", commit)
+
+    command_output("rm;-rf;" + tmp_wc_path)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("repo", help="Repository Path")
+    parser.add_argument("revision", help="Revision Number to run on.", type=int)
+
+    args = parser.parse_args()
+
+    prop_output = check_path_for_svn_property(args.repo, ".", "unity:dataPath")
+    if not prop_output:
+        return
+
+    look_cmd = "svnlook;%s;%s;--revision;%d" % ("%s", args.repo, args.revision)
+
+    check_for_meta_and_add_meta(look_cmd, args, prop_output)
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())
