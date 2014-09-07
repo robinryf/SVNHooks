@@ -44,17 +44,19 @@ def handle_added_files(args, added_files, meta_counter):
                 continue
 
         # In case a Folder is added.
-        if file_name.endswith("/"):
-            file_name = file_name[:-1]
+        #if file_name.endswith("/"):
+        #    file_name = file_name[:-1]
 
-        res = command_output("svn;info;file://" + args.repo + "/" + file_name + ".meta;1>/dev/null;2>&1")
+        #res = command_output("svn;info;file://" + args.repo + "/" + file_name + ".meta")
 
         # look if this File already has a .meta File commited
-        if len(res) is not 0:
-            continue
+        #if len(res) is not 0:
+        #    continue
 
         print("XX: File with Missing .meta:", file_name)
+        sys.stderr.write("PRE-COMMIT-HOOK: File added without .meta: '" + file_name + "'\n")
         meta_counter += 1
+        sys.stderr.flush()
 
     return meta_counter
 
@@ -77,16 +79,17 @@ def handle_deleted_files(args, deleted_files, meta_counter):
                 continue
 
         # In case a Folder is deleted.
-        if file_name.endswith("/"):
-            file_name = file_name[:-1]
+        #if file_name.endswith("/"):
+        #    file_name = file_name[:-1]
 
-        res = command_output("svn;info;file://" + args.repo + "/" + file_name + ".meta")
+        #res = command_output("svn;info;file://" + args.repo + "/" + file_name + ".meta")
 
         # look if the .meta file even exists
-        if len(res) is 0:
-            continue
+        #if len(res) is 0:
+        #    continue
 
         print("XX: File deleted without .meta:", file_name)
+        sys.stderr.write("PRE-COMMIT-HOOK: File deleted without .meta: '" + file_name + "'\n")
         meta_counter += 1
 
     return meta_counter
@@ -110,7 +113,7 @@ def check_for_meta_and_add_meta(look_cmd, args, unityDataPath):
         tmp_name = filename(line)
 
         print("Processing: " + tmp_name)
-        if not unityDataPath in tmp_name:
+        if not tmp_name.startswith(unityDataPath):
             continue
         print("PASS: " + tmp_name)
 
@@ -144,7 +147,7 @@ def check_for_meta_and_add_meta(look_cmd, args, unityDataPath):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("repo", help="Repository Path")
-    parser.add_argument("revision", help="Revision Number to run on.")
+    parser.add_argument("transaction", help="Transaction Description to run on.")
 
     args = parser.parse_args()
 
@@ -152,7 +155,7 @@ def main():
     if not prop_output:
         return 0
 
-    look_cmd = "svnlook;%s;%s;--revision;%d" % ("%s", args.repo, args.revision)
+    look_cmd = "svnlook;%s;%s;--transaction;%s" % ("%s", args.repo, args.transaction)
 
     returnCode = check_for_meta_and_add_meta(look_cmd, args, prop_output)
     return returnCode
