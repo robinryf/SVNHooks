@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/python
 
 #THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 #IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
@@ -10,8 +10,6 @@
 
 
 import argparse
-import uuid
-import os
 
 def command_output(cmd):
     """
@@ -25,8 +23,22 @@ def command_output(cmd):
 def check_path_for_svn_property(repo_path, path, prop_name):
     return command_output("svnlook;propget;" + repo_path + ";" + prop_name + ";" + path)
 
+def search_for_meta_file(file_path, start_index, file_path_list):
 
-def handle_added_files(args, added_files, meta_counter):
+    # In case a Folder is added.
+    if file_path.endswith("/"):
+        file_path = file_path[:-1]
+
+    for i in range(start_index, len(file_path_list)):
+
+        next_file_name = file_path_list[i];
+
+        if next_file_name == file_path + ".meta":
+            return True
+
+    return False
+
+def handle_added_files(added_files, meta_counter):
 
     for i in range(0, len(added_files)):
 
@@ -36,12 +48,9 @@ def handle_added_files(args, added_files, meta_counter):
         if file_name.endswith(".meta"):
             continue
 
-        # if the next File is the .meta File for this it was added alongside with this File.
-        if (i + 1) < len(added_files):
-            next_file_name = added_files[i+1]
-            if next_file_name == file_name + ".meta":
-                #print("Skipping '" + file_name + "' because the .meta File was commited in the same Revision")
-                continue
+        #search the following files for the .meta file
+        if search_for_meta_file(file_name, i, added_files):
+            continue
 
         # In case a Folder is added.
         #if file_name.endswith("/"):
@@ -56,12 +65,11 @@ def handle_added_files(args, added_files, meta_counter):
         print("XX: File with Missing .meta:", file_name)
         sys.stderr.write("PRE-COMMIT-HOOK: File added without .meta: '" + file_name + "'\n")
         meta_counter += 1
-        sys.stderr.flush()
 
     return meta_counter
 
 
-def handle_deleted_files(args, deleted_files, meta_counter):
+def handle_deleted_files(deleted_files, meta_counter):
 
     for i in range(0, len(deleted_files)):
 
@@ -71,12 +79,9 @@ def handle_deleted_files(args, deleted_files, meta_counter):
         if file_name.endswith(".meta"):
             continue
 
-        # if the next File is the .meta File for this it was added alongside with this File.
-        if (i + 1) < len(deleted_files):
-            next_file_name = deleted_files[i+1]
-            if next_file_name == file_name + ".meta":
-                #print("Skipping '" + file_name + "' because the .meta File was also deleted in the same Revision")
-                continue
+        # search the following files for the .meta file.
+        if search_for_meta_file(file_name, i, deleted_files):
+            continue
 
         # In case a Folder is deleted.
         #if file_name.endswith("/"):
@@ -95,7 +100,7 @@ def handle_deleted_files(args, deleted_files, meta_counter):
     return meta_counter
 
 
-def check_for_meta_and_add_meta(look_cmd, args, unityDataPath):
+def check_for_meta_and_add_meta(look_cmd, unityDataPath):
 
     def filename(line):
         return line[4:]
@@ -136,30 +141,55 @@ def check_for_meta_and_add_meta(look_cmd, args, unityDataPath):
     meta_counter = 0
 
     if len(added_files) > 0:
-        meta_counter = handle_added_files(args, added_files, meta_counter)
+        meta_counter = handle_added_files(added_files, meta_counter)
 
     if len(deleted_files) > 0:
-        meta_counter = handle_deleted_files(args, deleted_files, meta_counter)
+        meta_counter = handle_deleted_files(deleted_files, meta_counter)
 
     return meta_counter
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("repo", help="Repository Path")
-    parser.add_argument("transaction", help="Transaction Description to run on.")
 
-    args = parser.parse_args()
+    usage = """usage: %prog REPOS TXN
 
-    prop_output = check_path_for_svn_property(args.repo, ".", "unity:dataPath")
+    Run pre-commit options on a repository transaction."""
+
+    from optparse import OptionParser
+    parser = OptionParser(usage=usage)
+    parser.add_option("-r", "--revision",
+                    help="Test mode. TXN actually refers to a revision.",
+                    action="store_true", default=False)
+    errors = 0
+
+    (opts, (repos, txn_or_rvn)) = parser.parse_args()
+    look_opt = ("--transaction", "--revision")[opts.revision]
+    prop_output = check_path_for_svn_property(repos, ".", "unity:dataPath")
     if not prop_output:
         return 0
 
-    look_cmd = "svnlook;%s;%s;--transaction;%s" % ("%s", args.repo, args.transaction)
+    print("Unity Path: "  + prop_output)
 
-    returnCode = check_for_meta_and_add_meta(look_cmd, args, prop_output)
-    return returnCode
+    look_cmd = "svnlook;%s;%s;%s;%s" % (
+        "%s", repos, look_opt, txn_or_rvn)
+    errors += check_for_meta_and_add_meta(look_cmd, prop_output)
 
+    return errors
+
+    #parser = argparse.ArgumentParser()
+    #parser.add_argument("repo", help="Repository Path")
+    #parser.add_argument("transaction", help="Transaction Description to run on.")
+#
+    #args = parser.parse_args()
+#
+    #prop_output = check_path_for_svn_property(args.repo, ".", "unity:dataPath")
+    #if not prop_output:
+    #    return 0
+#
+    #look_cmd = "svnlook;%s;%s;--transaction;%s" % ("%s", args.repo, args.transaction)
+#
+    #returnCode = check_for_meta_and_add_meta(look_cmd, args, prop_output)
+    #return returnCode
 
 if __name__ == "__main__":
     import sys
