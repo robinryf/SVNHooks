@@ -9,8 +9,6 @@
 #THE SOFTWARE.
 
 
-import argparse
-
 def command_output(cmd):
     """
     Capture a commands standard output.
